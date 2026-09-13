@@ -49,12 +49,38 @@
     font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim);
     margin:0; padding:8px 14px; border-bottom:1px solid var(--line); font-weight:600;
   }
-  #code {
-    flex:1; width:100%; resize:none; border:0; outline:0; padding:14px;
-    background:transparent; color:var(--text);
+  /* 에디터는 두 겹이다. 뒤에 색칠한 <pre>, 앞에 투명한 <textarea>.
+     **둘의 글자 배치가 1px 이라도 어긋나면 색이 글자에서 밀린다** — 그래서
+     폰트·크기·행간·패딩·탭폭·줄바꿈 규칙을 .layer 로 묶어 한 곳에서만 정한다.
+     특히 white-space:pre (줄바꿈 없음)가 중요하다. 자동 줄바꿈을 켜면 두 겹의
+     줄바꿈 위치가 달라질 수 있고 그러면 아래로 갈수록 어긋난다. */
+  .editor { position:relative; flex:1; min-height:0; overflow:hidden; }
+  .layer {
+    margin:0; padding:14px; border:0;
     font-family:var(--mono); font-size:13.5px; line-height:1.65;
-    tab-size:4; white-space:pre; overflow:auto;
+    tab-size:4; white-space:pre; word-wrap:normal; overflow-wrap:normal;
+    letter-spacing:normal;
   }
+  #hl {
+    position:absolute; inset:0; overflow:auto; pointer-events:none;
+    color:var(--text); background:transparent;
+  }
+  #code {
+    position:absolute; inset:0; width:100%; height:100%;
+    resize:none; outline:0; overflow:auto;
+    background:transparent;
+    color:transparent;               /* 글자는 뒤 레이어가 그린다 */
+    caret-color:var(--text);         /* 커서는 보여야 한다 */
+  }
+  #code::selection { background:rgba(88,166,255,.30); }
+
+  /* 파이썬 토큰 색 */
+  .t-kw  { color:#ff7b72; }          /* def class if for ... */
+  .t-str { color:#a5d6ff; }
+  .t-com { color:#8b949e; font-style:italic; }
+  .t-num { color:#79c0ff; }
+  .t-bi  { color:#d2a8ff; }          /* print len range ... */
+  .t-fn  { color:#d2a8ff; }
   #out {
     flex:1; margin:0; padding:14px; overflow:auto; white-space:pre-wrap; word-break:break-word;
     font-family:var(--mono); font-size:13px; line-height:1.6; color:var(--dim);
@@ -91,8 +117,12 @@
 <main>
   <section class="pane">
     <h2>코드</h2>
-    <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off"
-      autocorrect="off" placeholder="여기에 파이썬을 쓰고 실행을 누르세요"></textarea>
+    <div class="editor">
+      <pre id="hl" class="layer" aria-hidden="true"></pre>
+      <textarea id="code" class="layer" spellcheck="false" autocapitalize="off"
+        autocomplete="off" autocorrect="off"
+        placeholder="여기에 파이썬을 쓰고 실행을 누르세요"></textarea>
+    </div>
   </section>
   <section class="pane">
     <h2>출력</h2>
@@ -124,7 +154,65 @@
 
 const $ = id => document.getElementById(id);
 const codeEl = $('code'), outEl = $('out'), statusEl = $('status'), runBtn = $('run');
-const slotEl = $('slot');
+const slotEl = $('slot'), hlEl = $('hl');
+
+// ---- 문법 색칠 -------------------------------------------------------------
+//
+// CodeMirror 를 얹지 않는다. 하이라이팅과 제대로 된 에디팅을 공짜로 얻지만
+// 번들이 붙고, "설치할 게 없다"가 이 사이트의 요점이라 로딩에 붙는 것도 최소로 둔다.
+// 대신 textarea 뒤에 색칠한 <pre> 를 깔고 앞의 글자만 투명하게 한다.
+//
+// ⚠️ **대안(alternation)의 순서가 전부다.** 주석과 문자열을 먼저 잡아야
+// "# def 는 키워드가 아니다" 나 문자열 안의 단어가 물들지 않는다. 키워드부터
+// 치환하는 흔한 구현은 문자열 안까지 칠해서 금방 티가 난다.
+// 삼중 따옴표를 홑따옴표보다 앞에 두는 것도 같은 이유다 — 뒤에 두면 여러 줄
+// 문자열이 두 개의 짧은 문자열로 쪼개져 깨진다.
+const PY_TOKENS = new RegExp([
+  '(#[^\\n]*)',                                             // 1 주석
+  '("""[\\s\\S]*?"""' + "|'''[\\s\\S]*?'''" +
+    '|"(?:\\\\.|[^"\\\\\\n])*"' + "|'(?:\\\\.|[^'\\\\\\n])*')",   // 2 문자열
+  '\\b(False|None|True|and|as|assert|async|await|break|class|continue|def|del|' +
+  'elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|' +
+  'or|pass|raise|return|try|while|with|yield|match|case|self)\\b',    // 3 키워드
+  '(\\b(?:0[xXbBoO][0-9a-fA-F_]+|\\d[\\d_]*\\.?[\\d_]*(?:[eE][+-]?\\d+)?[jJ]?)\\b)', // 4 숫자
+  '\\b(abs|all|any|bin|bool|bytes|callable|chr|dict|dir|divmod|enumerate|eval|' +
+  'filter|float|format|frozenset|getattr|hasattr|hash|hex|id|input|int|isinstance|' +
+  'issubclass|iter|len|list|map|max|min|next|object|oct|open|ord|pow|print|range|' +
+  'repr|reversed|round|set|setattr|slice|sorted|str|sum|super|tuple|type|zip)\\b'    // 5 내장
+].join('|'), 'g');
+
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+const esc = t => t.replace(/[&<>]/g, c => ESC[c]);
+
+function highlight(src) {
+  let out = '', last = 0, m;
+  PY_TOKENS.lastIndex = 0;
+  while ((m = PY_TOKENS.exec(src)) !== null) {
+    if (m[0].length === 0) { PY_TOKENS.lastIndex++; continue; }   // 빈 매치 무한루프 방지
+    out += esc(src.slice(last, m.index));
+    const cls = m[1] ? 't-com' : m[2] ? 't-str' : m[3] ? 't-kw'
+              : m[4] ? 't-num' : 't-bi';
+    out += '<span class="' + cls + '">' + esc(m[0]) + '</span>';
+    last = m.index + m[0].length;
+  }
+  out += esc(src.slice(last));
+  // 마지막 줄이 개행으로 끝나면 <pre> 는 그 빈 줄을 그리지 않아서 스크롤 높이가
+  // textarea 와 한 줄 어긋난다. 공백 한 칸을 덧대 높이를 맞춘다.
+  return out + '\n ';
+}
+
+function syncScroll() {
+  hlEl.scrollTop = codeEl.scrollTop;
+  hlEl.scrollLeft = codeEl.scrollLeft;
+}
+
+function paint() {
+  hlEl.innerHTML = highlight(codeEl.value);
+  syncScroll();
+}
+
+// 스크롤은 두 겹이 같이 움직여야 한다. 안 그러면 색이 글자에서 떨어져 나간다.
+codeEl.addEventListener('scroll', syncScroll);
 
 const KEY = 'note.py.slots.v1';
 const SAMPLE = `# 여기에 쓰고 실행을 누르세요. 설치할 건 없습니다.\n\nfor i in range(1, 6):\n    print(i, i ** 2)\n\nnames = ["가", "나", "다"]\nprint(", ".join(names))\n`;
@@ -152,12 +240,14 @@ function renderSlots() {
     slotEl.appendChild(o);
   });
   codeEl.value = state.slots[state.active].code;
+  paint();
 }
 renderSlots();
 
 codeEl.addEventListener('input', () => {
   state.slots[state.active].code = codeEl.value;
   saveSlots();
+  paint();
 });
 slotEl.addEventListener('change', () => { state.active = +slotEl.value; saveSlots(); renderSlots(); });
 $('new').onclick = () => {
