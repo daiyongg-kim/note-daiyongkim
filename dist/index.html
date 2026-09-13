@@ -31,7 +31,7 @@
   #status.ready { color:var(--ok); }
   #status.err { color:var(--err); }
 
-  .bar { display:flex; gap:8px; align-items:center; padding:8px 14px;
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 14px;
          border-bottom:1px solid var(--line); flex-wrap:wrap; }
   button, select {
     font:inherit; font-size:13px; color:var(--text); background:#21262d;
@@ -73,6 +73,35 @@
     caret-color:var(--text);         /* 커서는 보여야 한다 */
   }
   #code::selection { background:rgba(88,166,255,.30); }
+  /* 파일을 끌어다 놓는 중 */
+  .editor.drop::after {
+    content:''; position:absolute; inset:6px; pointer-events:none;
+    border:2px dashed var(--accent); border-radius:8px;
+    background:rgba(88,166,255,.06);
+  }
+  #saved { font-size:12px; color:var(--dim); }
+
+  /* 저장된 목록. 드롭다운은 눌러야만 보이는데, 여기서 알고 싶은 건
+     "내가 뭘 저장해 뒀지" 라서 항상 보여야 한다. */
+  #tabs {
+    display:flex; gap:4px; align-items:center;
+    padding:0 14px 8px; overflow-x:auto; overflow-y:hidden;
+    border-bottom:1px solid var(--line); background:var(--panel);
+    scrollbar-width:thin;
+  }
+  #tabs button {
+    display:flex; align-items:center; gap:7px; flex:0 0 auto;
+    font:inherit; font-size:12.5px; color:var(--dim); white-space:nowrap;
+    background:transparent; border:1px solid transparent; border-radius:7px;
+    padding:5px 10px; cursor:pointer;
+  }
+  #tabs button:hover { color:var(--text); background:#21262d; }
+  #tabs button[aria-current="true"] {
+    color:var(--text); background:#21262d; border-color:var(--line);
+  }
+  #tabs .x { color:var(--dim); font-size:11px; padding:0 1px; border-radius:4px; }
+  #tabs .x:hover { color:var(--err); background:rgba(248,81,73,.14); }
+  #tabs .add { font-size:15px; line-height:1; padding:4px 10px; }
 
   /* 줄 번호는 세 번째 겹이다. 같은 폰트·행간·위쪽 패딩을 써야 번호가 줄과 맞는다 —
      그래서 이것도 .layer 다. 너비는 자릿수에 따라 JS 가 --gutter 로 정한다.
@@ -153,11 +182,13 @@
 <div class="bar">
   <button id="run" class="primary" disabled>실행</button>
   <button id="clear">출력 지우기</button>
-  <select id="slot" title="저장 슬롯"></select>
-  <button id="rename">이름</button>
-  <button id="new">새로</button>
-  <button id="del">삭제</button>
+  <button id="rename" title="지금 연습장 이름 바꾸기 (탭을 두 번 눌러도 됩니다)">이름</button>
+  <button id="export" title="지금 연습장을 .py 파일로 내려받습니다">내보내기</button>
+  <button id="backup" title="연습장 전체를 .json 한 파일로 내려받습니다">전체 백업</button>
+  <button id="import" title=".py 또는 백업 .json 을 불러옵니다">가져오기</button>
   <button id="helpBtn" title="단축키 (⌘/Ctrl + ?)">도움말</button>
+  <span id="saved"></span>
+  <input type="file" id="file" accept=".py,.txt,.json,text/plain,application/json" multiple hidden>
   <span class="hint">코드는 이 브라우저에만 저장됩니다</span>
 </div>
 
@@ -171,7 +202,6 @@
     <dl>
       <dt><kbd data-mod></kbd> + <kbd>R</kbd></dt><dd>실행</dd>
       <dt><kbd data-mod></kbd> + <kbd>Enter</kbd></dt><dd>실행</dd>
-      <dt><kbd data-mod></kbd> + <kbd>S</kbd></dt><dd>저장 (평소에도 자동 저장됩니다)</dd>
     </dl>
 
     <h4>편집</h4>
@@ -190,6 +220,22 @@
       <dt><kbd>Backspace</kbd></dt><dd>들여쓰기 안에서는 4칸씩</dd>
     </dl>
 
+    <h4>저장된 목록 (상단 탭)</h4>
+    <dl>
+      <dt>탭 누르기</dt><dd>그 연습장으로 이동</dd>
+      <dt>탭 두 번 누르기</dt><dd>이름 바꾸기 (<em>이름</em> 버튼과 같음)</dd>
+      <dt><kbd>+</kbd></dt><dd>새 연습장</dd>
+      <dt><kbd>✕</kbd></dt><dd>삭제. 지금 보고 있는 탭에만 뜹니다</dd>
+    </dl>
+
+    <h4>파일</h4>
+    <dl>
+      <dt><kbd data-mod></kbd> + <kbd>S</kbd></dt><dd>저장 (평소에도 자동 저장됩니다)</dd>
+      <dt>내보내기</dt><dd>지금 연습장을 <code>.py</code> 파일로</dd>
+      <dt>전체 백업</dt><dd>연습장 전부를 <code>.json</code> 한 파일로</dd>
+      <dt>가져오기</dt><dd><code>.py</code>·백업 <code>.json</code> 불러오기. <strong>에디터에 끌어다 놓아도</strong> 됩니다</dd>
+    </dl>
+
     <h4>도움말</h4>
     <dl>
       <dt><kbd data-mod></kbd> + <kbd>?</kbd></dt><dd>이 창 열기</dd>
@@ -199,10 +245,15 @@
     <p class="note">
       <strong><span data-mod></span> + R 은 에디터에 포커스가 있을 때만</strong> 새로고침 대신 실행이 됩니다.
       페이지를 새로고침하려면 에디터 밖을 한 번 누르세요.<br>
-      실행 중에는 멈출 수 없습니다 — 무한 루프를 돌리면 탭을 새로고침하세요.
+      실행 중에는 멈출 수 없습니다 — 무한 루프를 돌리면 탭을 새로고침하세요.<br>
+      <strong>코드는 이 브라우저에만 저장됩니다.</strong> 사이트 데이터를 지우면 같이 사라지고,
+      사파리는 한동안 안 들르면 스스로 지우기도 합니다. 오래 둘 코드는 <em>전체 백업</em>으로
+      파일을 하나 받아 두세요.
     </p>
   </div>
 </dialog>
+
+<nav id="tabs" aria-label="저장된 연습장"></nav>
 
 <main>
   <section class="pane">
@@ -245,7 +296,7 @@
 
 const $ = id => document.getElementById(id);
 const codeEl = $('code'), outEl = $('out'), statusEl = $('status'), runBtn = $('run');
-const slotEl = $('slot'), hlEl = $('hl'), lnEl = $('ln'), editorEl = document.querySelector('.editor');
+const tabsEl = $('tabs'), savedEl = $('saved'), hlEl = $('hl'), lnEl = $('ln'), editorEl = document.querySelector('.editor');
 
 // ---- 문법 색칠 -------------------------------------------------------------
 //
@@ -333,42 +384,195 @@ function loadSlots() {
   } catch (_) {}
   return { active: 0, slots: [{ name: '연습장 1', code: SAMPLE }] };
 }
-function saveSlots() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {} }
+function saveSlots() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {}
+  renderSaved();
+}
+
+/** 내용이 **실제로 바뀔 때만** 시각을 찍는다. 저장할 때마다 찍으면 탭만 옮겨도
+ *  "방금 저장됨" 이 떠서, 정작 알고 싶은 "이건 언제 쓴 거지" 를 못 보게 된다. */
+function touch() {
+  const cur = state.slots[state.active];
+  if (cur) cur.updated = Date.now();
+}
+
+/** "3분 전" 처럼 보여 준다. 절대 시각이 궁금한 게 아니라
+ *  "방금 친 게 들어갔나" 가 궁금한 것이다. */
+function ago(t) {
+  const m = Math.floor((Date.now() - t) / 60000);
+  return m < 1 ? '방금' : m < 60 ? m + '분 전'
+       : m < 1440 ? Math.floor(m / 60) + '시간 전' : Math.floor(m / 1440) + '일 전';
+}
+function renderSaved() {
+  const t = state.slots[state.active] && state.slots[state.active].updated;
+  savedEl.textContent = t ? '저장됨 · ' + ago(t) : '';
+}
+setInterval(renderSaved, 60000);
 
 let state = loadSlots();
 
 function renderSlots() {
-  slotEl.innerHTML = '';
-  state.slots.forEach((s, i) => {
-    const o = document.createElement('option');
-    o.value = i; o.textContent = s.name;
-    if (i === state.active) o.selected = true;
-    slotEl.appendChild(o);
+  tabsEl.innerHTML = '';
+  state.slots.forEach((slot, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    if (i === state.active) b.setAttribute('aria-current', 'true');
+    b.title = slot.name + (slot.updated ? ' · ' + new Date(slot.updated).toLocaleString() : '');
+
+    const label = document.createElement('span');
+    label.textContent = slot.name;
+    b.appendChild(label);
+
+    // 삭제는 지금 보고 있는 것에만 띄운다. 모든 탭에 ✕ 가 있으면
+    // 옮기려다 지우게 된다.
+    if (i === state.active) {
+      const x = document.createElement('span');
+      x.className = 'x'; x.textContent = '✕'; x.title = '삭제';
+      x.addEventListener('click', ev => { ev.stopPropagation(); removeSlot(i); });
+      b.appendChild(x);
+    }
+    b.addEventListener('click', () => selectSlot(i));
+    b.addEventListener('dblclick', () => renameSlot(i));
+    tabsEl.appendChild(b);
   });
+
+  const add = document.createElement('button');
+  add.type = 'button'; add.className = 'add'; add.textContent = '+';
+  add.title = '새 연습장'; add.setAttribute('aria-label', '새 연습장');
+  add.addEventListener('click', newSlot);
+  tabsEl.appendChild(add);
+
   codeEl.value = state.slots[state.active].code;
   paint();
+  renderSaved();
+  // 탭이 많아 잘려 있으면 지금 것을 보이게 민다. block:'nearest' 라
+  // 페이지가 세로로 튀지 않는다.
+  const cur = tabsEl.querySelector('[aria-current="true"]');
+  if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
+
+function selectSlot(i) {
+  if (i === state.active) return;
+  state.active = i; saveSlots(); renderSlots(); codeEl.focus();
+}
+function newSlot() {
+  state.slots.push({ name: uniqueName('연습장 ' + (state.slots.length + 1)), code: '', updated: Date.now() });
+  state.active = state.slots.length - 1;
+  saveSlots(); renderSlots(); codeEl.focus();
+}
+function renameSlot(i) {
+  const n = prompt('이름', state.slots[i].name);
+  if (n && n.trim()) { state.slots[i].name = n.trim(); saveSlots(); renderSlots(); }
+}
+function removeSlot(i) {
+  // 되돌릴 수 없다. 빈 연습장은 묻지 않는다 — 잃을 게 없으니까.
+  const slot = state.slots[i];
+  if (slot.code.trim() && !confirm('"' + slot.name + '" 을(를) 지웁니다. 되돌릴 수 없습니다.')) return;
+  if (state.slots.length === 1) state.slots[0] = { name: '연습장 1', code: '', updated: Date.now() };
+  else { state.slots.splice(i, 1); state.active = Math.min(state.active, state.slots.length - 1); }
+  saveSlots(); renderSlots();
+}
+
 renderSlots();
 
 codeEl.addEventListener('input', () => {
   state.slots[state.active].code = codeEl.value;
-  saveSlots();
-  paint();
+  touch(); saveSlots(); paint();
 });
-slotEl.addEventListener('change', () => { state.active = +slotEl.value; saveSlots(); renderSlots(); });
-$('new').onclick = () => {
-  state.slots.push({ name: '연습장 ' + (state.slots.length + 1), code: '' });
-  state.active = state.slots.length - 1; saveSlots(); renderSlots(); codeEl.focus();
+$('rename').onclick = () => renameSlot(state.active);
+
+// ---- 파일로 내보내기 / 가져오기 ---------------------------------------------
+//
+// localStorage 는 이 브라우저에만 있다. 사이트 데이터를 지우면 같이 사라지고,
+// 사파리는 한동안 안 들르면 스스로 지운다(ITP). "나중에 읽어볼" 코드라면
+// 브라우저 밖에 복사본이 하나 있어야 한다.
+
+function download(name, text, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime + ';charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);   // 즉시 풀면 다운로드가 끊긴다
+}
+
+/** 파일 이름에 못 쓰는 글자를 털어낸다. */
+function safeName(s) {
+  return (String(s || '').replace(/[\/\\?%*:|"<>]/g, '').trim()) || 'code';
+}
+
+/** 같은 이름이 있으면 (2), (3) 을 붙인다. */
+function uniqueName(base) {
+  const names = new Set(state.slots.map(s => s.name));
+  if (!names.has(base)) return base;
+  let i = 2; while (names.has(base + ' (' + i + ')')) i++;
+  return base + ' (' + i + ')';
+}
+
+$('export').onclick = () => {
+  const cur = state.slots[state.active];
+  download(safeName(cur.name) + '.py', cur.code, 'text/x-python');
+  flashStatus('내보냈습니다');
 };
-$('rename').onclick = () => {
-  const n = prompt('이름', state.slots[state.active].name);
-  if (n && n.trim()) { state.slots[state.active].name = n.trim(); saveSlots(); renderSlots(); }
+
+$('backup').onclick = () => {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate());
+  download('python-연습장-' + stamp + '.json',
+    JSON.stringify({ v: 1, exported: d.toISOString(), slots: state.slots }, null, 2),
+    'application/json');
+  flashStatus(state.slots.length + '개 백업했습니다');
 };
-$('del').onclick = () => {
-  if (state.slots.length === 1) { state.slots[0] = { name: '연습장 1', code: '' }; }
-  else { state.slots.splice(state.active, 1); state.active = 0; }
+
+/** 가져온 것은 **덮어쓰지 않고 뒤에 붙인다.** 백업 파일을 잘못 골라도
+ *  지금 쓰던 코드가 사라지면 안 된다 — 되돌릴 방법이 없다. */
+function importFile(name, text) {
+  if (/\.json$/i.test(name)) {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { flashStatus('읽을 수 없는 파일'); return; }
+    const list = Array.isArray(parsed) ? parsed : parsed && parsed.slots;
+    if (!Array.isArray(list) || !list.length) { flashStatus('연습장이 없는 파일'); return; }
+    list.forEach(x => state.slots.push({
+      name: uniqueName(String(x.name || '가져온 코드')),
+      code: String(x.code || ''),
+      updated: Number(x.updated) || Date.now()
+    }));
+    flashStatus(list.length + '개 가져왔습니다');
+  } else {
+    state.slots.push({
+      name: uniqueName(name.replace(/\.[^.]+$/, '') || '가져온 코드'),
+      code: text, updated: Date.now()
+    });
+    flashStatus('가져왔습니다');
+  }
+  state.active = state.slots.length - 1;
   saveSlots(); renderSlots();
-};
+}
+
+function readFiles(files) {
+  [...files].forEach(f => f.text().then(t => importFile(f.name, t))
+                           .catch(() => flashStatus('파일을 읽지 못했습니다')));
+}
+
+$('import').onclick = () => $('file').click();
+$('file').addEventListener('change', e => {
+  readFiles(e.target.files);
+  e.target.value = '';        // 같은 파일을 연달아 고를 수 있게 비운다
+});
+
+// 끌어다 놓기. textarea 는 기본 동작이 "파일 경로를 글자로 붙여넣기" 라서
+// preventDefault 를 안 하면 코드 자리에 file:// 경로가 박힌다.
+const editorDrop = document.querySelector('.editor');
+['dragenter', 'dragover'].forEach(ev => editorDrop.addEventListener(ev, e => {
+  if (!e.dataTransfer || !e.dataTransfer.types.includes('Files')) return;
+  e.preventDefault(); editorDrop.classList.add('drop');
+}));
+['dragleave', 'drop'].forEach(ev => editorDrop.addEventListener(ev, e => {
+  if (ev === 'drop') e.preventDefault();
+  editorDrop.classList.remove('drop');
+}));
+editorDrop.addEventListener('drop', e => {
+  if (e.dataTransfer && e.dataTransfer.files.length) readFiles(e.dataTransfer.files);
+});
 
 // ---- 에디터 편의 -----------------------------------------------------------
 //
@@ -543,7 +747,7 @@ codeEl.addEventListener('keydown', e => {
   if ((e.key === 's' || e.key === 'S') && (e.metaKey || e.ctrlKey)) {
     e.preventDefault();
     state.slots[state.active].code = codeEl.value;
-    saveSlots();
+    touch(); saveSlots();
     flashStatus('저장됨');
     return;
   }
