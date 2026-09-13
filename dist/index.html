@@ -380,7 +380,21 @@ const SAMPLE = `# 여기에 쓰고 실행을 누르세요. 설치할 건 없습�
 function loadSlots() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) { const p = JSON.parse(raw); if (p && p.slots && p.slots.length) return p; }
+    const p = raw && JSON.parse(raw);
+    if (p && Array.isArray(p.slots) && p.slots.length) {
+      // 저장소에서 온 값은 믿지 않는다. active 가 범위를 벗어나 있으면
+      // slots[active] 가 undefined 가 되고, 그 순간 첫 렌더가 통째로 던진다 —
+      // 화면은 비어 있고 타이핑해도 아무 데도 안 들어간다. 겉보기로는
+      // "저장이 안 되는" 것과 구별되지 않아서, 조용히 고쳐 두는 게 맞다.
+      const slots = p.slots
+        .filter(x => x && typeof x === 'object')
+        .map(x => ({ name: String(x.name || '연습장'), code: String(x.code || ''),
+                     updated: Number(x.updated) || undefined }));
+      if (slots.length) {
+        const active = Number.isInteger(p.active) ? p.active : 0;
+        return { active: Math.min(Math.max(0, active), slots.length - 1), slots };
+      }
+    }
   } catch (_) {}
   return { active: 0, slots: [{ name: '연습장 1', code: SAMPLE }] };
 }
