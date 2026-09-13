@@ -175,15 +175,90 @@ $('del').onclick = () => {
 };
 
 // ---- 에디터 편의 -----------------------------------------------------------
-codeEl.addEventListener('keydown', e => {
-  if (e.key === 'Tab') {                       // 탭이 포커스를 옮기지 않게
-    e.preventDefault();
-    const s = codeEl.selectionStart, t = codeEl.selectionEnd;
-    codeEl.value = codeEl.value.slice(0, s) + '    ' + codeEl.value.slice(t);
-    codeEl.selectionStart = codeEl.selectionEnd = s + 4;
-    codeEl.dispatchEvent(new Event('input'));
+//
+// textarea 하나로 간다. CodeMirror 를 얹으면 하이라이팅과 제대로 된 인덴트를
+// 공짜로 얻지만 번들이 붙는다 — "설치할 게 없다"가 이 사이트의 요점이라 로딩에
+// 붙는 것도 최소로 둔다. 대신 **파이썬에서 없으면 못 쓰는 것들**만 손으로 넣는다:
+// 탭, 줄바꿈 시 인덴트 유지, `:` 뒤 자동 들여쓰기, 백스페이스로 4칸 지우기.
+
+/** 커서가 있는 줄의 시작 인덱스 */
+function lineStart(v, pos) { const i = v.lastIndexOf('\n', pos - 1); return i + 1; }
+
+/** 선택 구간을 바꾸고 undo 스택을 유지한다.
+ *  value 를 직접 대입하면 브라우저의 실행취소가 끊긴다 — execCommand 는
+ *  폐기 예정이지만 textarea 에서 undo 를 살리는 유일한 방법이라 아직 이걸 쓴다. */
+function insertText(t) {
+  if (!document.execCommand || !document.execCommand('insertText', false, t)) {
+    const s = codeEl.selectionStart, e2 = codeEl.selectionEnd;
+    codeEl.value = codeEl.value.slice(0, s) + t + codeEl.value.slice(e2);
+    codeEl.selectionStart = codeEl.selectionEnd = s + t.length;
   }
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
+  codeEl.dispatchEvent(new Event('input'));
+}
+
+codeEl.addEventListener('keydown', e => {
+  const v = codeEl.value, s = codeEl.selectionStart, t = codeEl.selectionEnd;
+
+  // ⌘/Ctrl + Enter → 실행
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); return; }
+
+  // Tab — 포커스를 옮기지 않게. 여러 줄을 고른 상태면 블록 들여쓰기/내어쓰기.
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    if (s !== t && v.slice(s, t).includes('\n')) {
+      const a = lineStart(v, s);
+      const block = v.slice(a, t);
+      const out = e.shiftKey
+        ? block.replace(/^ {1,4}/gm, '')
+        : block.replace(/^/gm, '    ');
+      codeEl.setSelectionRange(a, t);
+      insertText(out);
+      codeEl.setSelectionRange(a, a + out.length);
+      return;
+    }
+    if (e.shiftKey) {                      // Shift+Tab — 앞의 4칸까지 지운다
+      const a = lineStart(v, s);
+      const lead = v.slice(a, s).match(/^ +/);
+      if (lead) {
+        const cut = Math.min(4, lead[0].length);
+        codeEl.setSelectionRange(s - cut, s);
+        insertText('');
+      }
+      return;
+    }
+    insertText('    ');
+    return;
+  }
+
+  // Enter — 앞 줄의 들여쓰기를 유지하고, `:` 로 끝났으면 한 단계 더 들어간다.
+  // 파이썬은 들여쓰기가 문법이라 이게 없으면 매 줄 스페이스를 세야 한다.
+  if (e.key === 'Enter' && !e.shiftKey) {
+    const a = lineStart(v, s);
+    const line = v.slice(a, s);
+    const indent = (line.match(/^ */) || [''])[0];
+    const opensBlock = /:\s*(#.*)?$/.test(line);
+    // 블록을 닫는 키워드 다음 줄은 한 단계 나온다.
+    const dedents = /^\s*(return|pass|break|continue|raise)\b/.test(line);
+    let next = indent;
+    if (opensBlock) next += '    ';
+    else if (dedents && indent.length >= 4) next = indent.slice(4);
+    e.preventDefault();
+    insertText('\n' + next);
+    return;
+  }
+
+  // Backspace — 들여쓰기 안에서는 한 칸이 아니라 4칸 단위로 지운다.
+  if (e.key === 'Backspace' && s === t) {
+    const a = lineStart(v, s);
+    const before = v.slice(a, s);
+    if (before.length > 0 && /^ +$/.test(before)) {
+      e.preventDefault();
+      const cut = before.length % 4 === 0 ? 4 : before.length % 4;
+      codeEl.setSelectionRange(s - cut, s);
+      insertText('');
+      return;
+    }
+  }
 });
 
 // ---- 출력 ------------------------------------------------------------------
