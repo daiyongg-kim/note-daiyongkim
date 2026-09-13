@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Python 연습장 — note.daiyongkim.com</title>
+<meta name="description" content="설치 없이 브라우저에서 바로 도는 파이썬 연습장. Pyodide 로 진짜 CPython 이 로컬에서 실행됩니다.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐍</text></svg>">
+<style>
+  :root {
+    --bg:#0e1117; --panel:#161b22; --line:#262c36; --text:#e6edf3;
+    --dim:#8b949e; --accent:#58a6ff; --ok:#3fb950; --err:#f85149;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body {
+    background:var(--bg); color:var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+    display:flex; flex-direction:column;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  header {
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel);
+  }
+  header h1 { font-size:15px; margin:0; font-weight:700; letter-spacing:.2px; }
+  header h1 span { color:var(--dim); font-weight:400; }
+  #status { font-size:12px; color:var(--dim); margin-left:auto; }
+  #status.ready { color:var(--ok); }
+  #status.err { color:var(--err); }
+
+  .bar { display:flex; gap:8px; align-items:center; padding:8px 14px;
+         border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  button, select {
+    font:inherit; font-size:13px; color:var(--text); background:#21262d;
+    border:1px solid var(--line); border-radius:7px; padding:7px 12px; cursor:pointer;
+  }
+  button:hover:not(:disabled), select:hover { border-color:#3d444d; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:var(--accent); color:#05121f; border-color:transparent; font-weight:700; }
+  .hint { font-size:12px; color:var(--dim); margin-left:auto; }
+
+  main { flex:1; display:flex; min-height:0; }
+  .pane { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .pane + .pane { border-left:1px solid var(--line); }
+  .pane h2 {
+    font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim);
+    margin:0; padding:8px 14px; border-bottom:1px solid var(--line); font-weight:600;
+  }
+  #code {
+    flex:1; width:100%; resize:none; border:0; outline:0; padding:14px;
+    background:transparent; color:var(--text);
+    font-family:var(--mono); font-size:13.5px; line-height:1.65;
+    tab-size:4; white-space:pre; overflow:auto;
+  }
+  #out {
+    flex:1; margin:0; padding:14px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+    font-family:var(--mono); font-size:13px; line-height:1.6; color:var(--dim);
+  }
+  #out .e { color:var(--err); }
+  #out .t { color:#6e7681; }
+
+  @media (max-width: 760px) {
+    main { flex-direction:column; }
+    .pane + .pane { border-left:0; border-top:1px solid var(--line); }
+    #code { min-height:44vh; }
+    #out { min-height:26vh; }
+    .hint { display:none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Python 연습장 <span>· note.daiyongkim.com</span></h1>
+  <div id="status">런타임 준비 중…</div>
+</header>
+
+<div class="bar">
+  <button id="run" class="primary" disabled>실행</button>
+  <button id="clear">출력 지우기</button>
+  <select id="slot" title="저장 슬롯"></select>
+  <button id="rename">이름</button>
+  <button id="new">새로</button>
+  <button id="del">삭제</button>
+  <span class="hint">⌘/Ctrl + Enter 로 실행 · 코드는 이 브라우저에만 저장됩니다</span>
+</div>
+
+<main>
+  <section class="pane">
+    <h2>코드</h2>
+    <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off"
+      autocorrect="off" placeholder="여기에 파이썬을 쓰고 실행을 누르세요"></textarea>
+  </section>
+  <section class="pane">
+    <h2>출력</h2>
+    <pre id="out"></pre>
+  </section>
+</main>
+
+<script>
+/*
+  설계 메모 — 왜 이렇게 짰는지
+
+  1) Pyodide 를 쓴다. CPython 을 WebAssembly 로 올린 것이라 **진짜 파이썬**이
+     브라우저 안에서 돈다. 서버가 없으니 "남의 코드를 안전하게 실행"이라는
+     어려운 문제 자체가 사라지고, 정적 호스팅으로 끝나 비용이 0이다.
+
+  2) 런타임을 페이지 로드와 함께 받지 않는다. 7MB 쯤 되기 때문에, 먼저 화면을
+     띄우고 뒤에서 받는다. 다 받기 전에 실행을 누르면 기다렸다가 실행한다 —
+     버튼이 죽어 있는 것보다 낫다.
+
+  3) 코드는 localStorage 에만 둔다. 서버가 없으니 그것 말고 둘 데가 없고,
+     그게 이 사이트의 약속이기도 하다. 대신 **기기를 옮기면 안 따라간다**는 걸
+     UI 에 적어 둔다 — 조용히 잃는 게 제일 나쁘다.
+
+  4) 무한 루프 대비. Pyodide 는 메인 스레드에서 도는 동안 탭 전체를 멈춘다.
+     Web Worker 로 빼면 중단할 수 있지만 구조가 꽤 복잡해진다. 연습장이라는
+     범위에서는 "탭을 새로고침하면 된다"가 맞는 답이고, 대신 그 사실을
+     처음 실행 전에 한 번 알려 준다.
+*/
+
+const $ = id => document.getElementById(id);
+const codeEl = $('code'), outEl = $('out'), statusEl = $('status'), runBtn = $('run');
+const slotEl = $('slot');
+
+const KEY = 'note.py.slots.v1';
+const SAMPLE = `# 여기에 쓰고 실행을 누르세요. 설치할 건 없습니다.\n\nfor i in range(1, 6):\n    print(i, i ** 2)\n\nnames = ["가", "나", "다"]\nprint(", ".join(names))\n`;
+
+// ---- 저장 슬롯 -------------------------------------------------------------
+// 실패해도 앱이 죽지 않게 전부 try 로 감싼다. 사파리 프라이빗 모드에서는
+// localStorage 접근 자체가 던진다.
+function loadSlots() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) { const p = JSON.parse(raw); if (p && p.slots && p.slots.length) return p; }
+  } catch (_) {}
+  return { active: 0, slots: [{ name: '연습장 1', code: SAMPLE }] };
+}
+function saveSlots() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {} }
+
+let state = loadSlots();
+
+function renderSlots() {
+  slotEl.innerHTML = '';
+  state.slots.forEach((s, i) => {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = s.name;
+    if (i === state.active) o.selected = true;
+    slotEl.appendChild(o);
+  });
+  codeEl.value = state.slots[state.active].code;
+}
+renderSlots();
+
+codeEl.addEventListener('input', () => {
+  state.slots[state.active].code = codeEl.value;
+  saveSlots();
+});
+slotEl.addEventListener('change', () => { state.active = +slotEl.value; saveSlots(); renderSlots(); });
+$('new').onclick = () => {
+  state.slots.push({ name: '연습장 ' + (state.slots.length + 1), code: '' });
+  state.active = state.slots.length - 1; saveSlots(); renderSlots(); codeEl.focus();
+};
+$('rename').onclick = () => {
+  const n = prompt('이름', state.slots[state.active].name);
+  if (n && n.trim()) { state.slots[state.active].name = n.trim(); saveSlots(); renderSlots(); }
+};
+$('del').onclick = () => {
+  if (state.slots.length === 1) { state.slots[0] = { name: '연습장 1', code: '' }; }
+  else { state.slots.splice(state.active, 1); state.active = 0; }
+  saveSlots(); renderSlots();
+};
+
+// ---- 에디터 편의 -----------------------------------------------------------
+codeEl.addEventListener('keydown', e => {
+  if (e.key === 'Tab') {                       // 탭이 포커스를 옮기지 않게
+    e.preventDefault();
+    const s = codeEl.selectionStart, t = codeEl.selectionEnd;
+    codeEl.value = codeEl.value.slice(0, s) + '    ' + codeEl.value.slice(t);
+    codeEl.selectionStart = codeEl.selectionEnd = s + 4;
+    codeEl.dispatchEvent(new Event('input'));
+  }
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
+});
+
+// ---- 출력 ------------------------------------------------------------------
+function write(text, cls) {
+  const n = document.createElement('span');
+  if (cls) n.className = cls;
+  n.textContent = text;
+  outEl.appendChild(n);
+  outEl.scrollTop = outEl.scrollHeight;
+}
+$('clear').onclick = () => { outEl.textContent = ''; };
+
+// ---- 런타임 ----------------------------------------------------------------
+let pyodide = null, loading = null;
+
+function setStatus(t, cls) { statusEl.textContent = t; statusEl.className = cls || ''; }
+
+function loadRuntime() {
+  if (loading) return loading;
+  loading = (async () => {
+    const src = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = res; s.onerror = () => rej(new Error('런타임을 받지 못했습니다'));
+      document.head.appendChild(s);
+    });
+    const py = await loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/' });
+    py.setStdout({ batched: s => write(s + '\n') });
+    py.setStderr({ batched: s => write(s + '\n', 'e') });
+    return py;
+  })();
+  return loading;
+}
+
+// Pyodide 는 사용자 코드를 자기 래퍼 안에서 돌리기 때문에, 트레이스백 맨 위에
+// `_pyodide/_base.py` 프레임이 몇 개 붙어 나온다. 내 코드에서 난 에러를 보려는
+// 사람에게는 순수한 잡음이고, 초보자에게는 "내가 뭘 잘못했나" 를 가린다.
+// 내부 프레임과 그에 딸린 소스 줄·캐럿 줄을 걷어낸다.
+function cleanTraceback(text) {
+  const lines = text.split('\n');
+    const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (/File "\/lib\/python\d+\.zip\/_pyodide\//.test(ln)) {
+      // 이 프레임의 소스 줄과 캐럿 줄까지 같이 버린다.
+      while (i + 1 < lines.length && !/^\s*File "/.test(lines[i + 1])
+             && !/^\w*(Error|Exception|Warning)/.test(lines[i + 1])
+             && lines[i + 1].trim() !== '') { i++; }
+      continue;
+    }
+    out.push(ln);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+let warnedAboutLoops = false;
+
+async function run() {
+  runBtn.disabled = true;
+  try {
+    if (!pyodide) {
+      setStatus('런타임 받는 중…');
+      pyodide = await loadRuntime();
+      setStatus('준비됨', 'ready');
+    }
+    if (!warnedAboutLoops) {
+      warnedAboutLoops = true;
+      write('[처음 한 번만] 무한 루프를 돌리면 탭이 멈춥니다. 그때는 새로고침하세요.\n\n', 't');
+    }
+    const t0 = performance.now();
+    write('▸ 실행\n', 't');
+    await pyodide.runPythonAsync(codeEl.value);
+    write(`▪ ${((performance.now() - t0) / 1000).toFixed(2)}s\n\n`, 't');
+  } catch (err) {
+    write(cleanTraceback(String(err && err.message ? err.message : err)) + '\n\n', 'e');
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+runBtn.onclick = run;
+
+// 페이지는 즉시 쓸 수 있게 해두고 런타임은 뒤에서 받는다.
+runBtn.disabled = false;
+setStatus('런타임은 처음 실행할 때 받습니다');
+loadRuntime().then(py => { pyodide = py; setStatus('준비됨', 'ready'); })
+             .catch(e => setStatus(e.message, 'err'));
+</script>
+</body>
+</html>
